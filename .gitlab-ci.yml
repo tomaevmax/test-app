@@ -1,0 +1,34 @@
+stages:
+  - build
+  - deploy
+variables:
+  IMAGE_TAG: "$CI_COMMIT_TAG"
+build_all:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_DOCKER_HUB_AUTH\":{\"username\":\"$CI_DOCKER_HUB_USER\",\"password\":\"$CI_DOCKER_HUB_TOKEN\"}}}" > /kaniko/.docker/config.json
+    - if $CI_COMMIT_TAG; then IMAGE_TAG=$CI_COMMIT_SHORT_SHA; else IMAGE_TAG=$CI_COMMIT_TAG; fi
+    - cat index.html | sed -e "s,TAG,v${IMAGE_TAG}," | tee index.html
+    - >-
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${CI_DOCKER_HUB_USER}/${CI_PROJECT_NAME}:${IMAGE_TAG}"
+      --cleanup
+
+deploy:
+  image: bitnami/kubectl:latest
+  stage: deploy
+  script:
+    - kubectl config use-context ${CI_PROJECT_PATH}:gitlab-agent
+    - cat ./manifests/deployment.yaml | sed -e "s,TAG,${CI_DOCKER_HUB_USER}/${CI_PROJECT_NAME}:${IMAGE_TAG}," | kubectl apply -f -
+    - kubectl apply -f ./manifests/service.yaml
+    - kubectl apply -f ./manifests/ingress.yaml
+  only:
+   - tags
+  except:
+   - branches
